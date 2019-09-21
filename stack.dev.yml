@@ -65,6 +65,8 @@ services:
       LETSENCRYPT_HOST: api.abcer.world
       LETSENCRYPT_EMAIL: shu@abcer.world
       SECRET: 'event.abcer.world'
+    volumes:
+      - ./octopus-backend:/data
 
 volumes:
   conf:
@@ -72,3 +74,4 @@ volumes:
   html:
   dhparam:
   certs:
+  octopus-backend:
