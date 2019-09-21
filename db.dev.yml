@@ -24,10 +24,3 @@ services:
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: root
       ME_CONFIG_MONGODB_SERVER: mongo
-
-volumes:
-  conf:
-  vhost:
-  html:
-  dhparam:
-  certs:
