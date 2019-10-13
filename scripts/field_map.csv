@@ -1,12 +1,17 @@
+first name,first_name
+last name,last_name
 your full name,name
+company,organization
+rsvp source,source
 email address,email
 company/organization,organization
-title / occupation, title
+title / occupation,title
 location (city),location
 linkedin (for job opportunity),linkedin
 github,github
 how did you hear about our community?,source
 which areas of blockchain are you interested in?,interested_topics
+interests,interested_topics
 why do you want to join our community,expectation
 do you want be a volunteer for future abc events ?,interested_in_volunteer
 resume,resume

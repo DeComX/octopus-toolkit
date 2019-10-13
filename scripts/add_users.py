@@ -1,10 +1,15 @@
+#!/bin/python2
+
 from datetime import datetime
 
 import argparse
 import csv
+import os
 import pymongo
 
-SKIPPED_FEILDS = ['experience', 'timestamp']
+WHITELIST = ['name', 'email', 'title', 'organization', 'source',
+             'interested_topics', 'expectation', 'interested_in_volunteer',
+             'location', 'linkedin', 'github', 'resume', 'feedback', 'subscription_status']
 ARRARY_FIELDS = ['source', 'interested_topics', 'expectation']
 BOOLEAN_FIELDS = ['interested_in_volunteer']
 CANONICAL_FIELDS = ['source', 'interested_topics']
@@ -18,13 +23,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description='import users')
     parser.add_argument('--users', dest='users', help='file with user data')
     parser.add_argument('--fields', dest='fields', help='fields map')
+    parser.add_argument('--dryrun', dest='dryrun', action='store_true')
     args = parser.parse_args()
     return args
 
-def parse_users(filename):
+def parse_users(filename, format):
     print('Parsing users data')
-    with open(filename, 'r') as tsvfile:
-        users = csv.DictReader(tsvfile, delimiter='\t')
+    basename, file_extension = os.path.splitext(filename)
+    delim = ',' if file_extension == 'csv' else '\t'
+    with open(filename, 'r') as f:
+        users = csv.DictReader(f, delimiter=delim)
         for user in users:
             yield user
 
@@ -40,18 +48,25 @@ def canonicalize(value):
     value = value.replace('&', 'and')
     return ('_').join(value.lower().split(' '))
 
-def transform_one(user_data, fields):
-    result = {}
-    for k,v in user_data.iteritems():
-        k = k.lower().strip()
-        v = v.strip()
-        field_name = fields.get(k, k)
+def remove_quote(string):
+    if string.startswith('"') and string.endswith('"'):
+        string = string[1:-1]
+    return string
 
-        if (not v) or (v.lower() == 'n/a') or (field_name in SKIPPED_FEILDS):
+def transform_one(user, fields):
+    result = {}
+    for k,v in user.iteritems():
+        if (not v) or (v.lower() == 'n/a'):
             continue
+
+        k = remove_quote(k.lower().strip())
+        v = v.lower().strip()
+        field_name = fields.get(k, k)
 
         if field_name in ARRARY_FIELDS:
             v = [i.strip() for i in v.split(',')]
+            v = [i.strip() for i in v.split(' and ')]
+            v = [i.strip() for i in v.split('/')]
             if field_name in CANONICAL_FIELDS:
                 v = [canonicalize(i) for i in v]
         else:
@@ -61,20 +76,40 @@ def transform_one(user_data, fields):
                 v = v.lower() in ['yes', 'y', 'true']
 
         result[field_name] = v
-
     return result
 
-def add_all(users, fields):
+def post_process(user):
+    if "name" not in user and ("first_name" in user and "last_name" in user):
+        user['name'] = user["first_name"] + " " + user["last_name"]
+    result = {}
+    for k, v in user.iteritems():
+        if k in WHITELIST:
+            result[k] = v
+    return result
+
+def add_all(users, fields, dryrun):
     for user in users:
-        add_one(transform_one(user, fields))
+        transformed = transform_one(user, fields)
+        processed = post_process(transformed)
+        add_one(processed, dryrun)
 
-def merge(queried, new):
+def get_update(queried, new):
+    update = {}
     for k, v in new.iteritems():
-        if k not in queried or queried[k] != v:
-            queried[k] = v
-    return queried
+        if v and (k not in queried or queried[k] != v):
+            update[k] = v
+    return update
 
-def add_one(user_data):
+def set_default(user):
+    if 'name' not in user or not user['name']:
+        user['name'] = 'unknown'
+    if 'interested_in_volunteer' not in user:
+        user['interested_in_volunteer'] = False
+    if 'subscription_status' not in user:
+        user['subscription_status'] = 'unsubscribed'
+    return user
+
+def add_one(user_data, dryrun):
     if ('email' not in user_data) or (not user_data['email']):
         print("Missing email field for record {}".format(user_data))
         return
@@ -83,17 +118,24 @@ def add_one(user_data):
     user = coll.find_one({"email": user_data['email']})
     if user:
         print("Found user with email {}.".format(user_data['email']))
-        merged = merge(user, user_data)
-        print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tMerged record: {}".format(user, user_data, merged))
-#        coll.update_one(merged)
+        update = get_update(user, user_data)
+
+        if update:
+            if dryrun:
+                print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
+            else:
+                coll.update_one({'_id': user['_id']}, {"$set": update}, upsert = False)
     else:
-        print("Adding {}".format(user_data))
-#        coll.insert_one(user_data)
+        user_data = set_default(user_data)
+        if dryrun:
+            print("Adding {}".format(user_data))
+        else:
+            coll.insert_one(user_data)
 
 def run(args):
-    users = parse_users(args.users)
+    users = parse_users(args.users, args.format)
     fields = parse_fields(args.fields)
-    add_all(users, fields)
+    add_all(users, fields, args.dryrun)
 
 def main():
     run(parse_args())
