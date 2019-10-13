@@ -10,9 +10,10 @@ import pymongo
 WHITELIST = ['name', 'email', 'title', 'organization', 'source',
              'interested_topics', 'expectation', 'interested_in_volunteer',
              'location', 'linkedin', 'github', 'resume', 'feedback', 'subscription_status']
-ARRARY_FIELDS = ['source', 'interested_topics', 'expectation']
+ARRAY_FIELDS = ['source', 'interested_topics', 'expectation']
+CANONICAL_FIELDS = ['title', 'location', 'source']
 BOOLEAN_FIELDS = ['interested_in_volunteer']
-CANONICAL_FIELDS = ['source', 'interested_topics']
+SNAKE_CASE_FIELDS = ['source', 'interested_topics']
 
 def get_coll():
     client = pymongo.MongoClient("mongodb://root:root@127.0.0.1:27017/dev?authSource=admin")
@@ -21,20 +22,22 @@ def get_coll():
 
 def parse_args():
     parser = argparse.ArgumentParser(description='import users')
-    parser.add_argument('--users', dest='users', help='file with user data')
+    parser.add_argument('--datadir', dest='datadir', help='dir with user data')
     parser.add_argument('--fields', dest='fields', help='fields map')
     parser.add_argument('--dryrun', dest='dryrun', action='store_true')
     args = parser.parse_args()
     return args
 
-def parse_users(filename, format):
-    print('Parsing users data')
-    basename, file_extension = os.path.splitext(filename)
-    delim = ',' if file_extension == 'csv' else '\t'
-    with open(filename, 'r') as f:
-        users = csv.DictReader(f, delimiter=delim)
-        for user in users:
-            yield user
+def parse_users(directory):
+    for filename in os.listdir(directory):
+        if filename.endswith(".csv") or filename.endswith(".tsv"):
+            delim = ',' if filename.endswith(".csv") == 'csv' else '\t'
+            fullname = os.path.join(directory, filename)
+            print('Processing file {}'.format(fullname))
+            with open(fullname, 'r') as f:
+                users = csv.DictReader(f, delimiter=delim)
+                for user in users:
+                    yield user
 
 def parse_fields(filename):
     fields = {}
@@ -45,33 +48,36 @@ def parse_fields(filename):
     return fields
 
 def canonicalize(value):
-    value = value.replace('&', 'and')
-    return ('_').join(value.lower().split(' '))
+    value = value.lower().strip()
+    if value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
+    if value.startswith("'") and value.endswith("'"):
+        value = value[1:-1]
+    value = value.replace('&', ' and ')
+    value = value.replace('/', ' and ')
+    return ' '.join(value.split())
 
-def remove_quote(string):
-    if string.startswith('"') and string.endswith('"'):
-        string = string[1:-1]
-    return string
+def to_snake_case(value):
+    return "_".join(value.lower().strip().split(' '))
 
 def transform_one(user, fields):
     result = {}
-    for k,v in user.iteritems():
+    for k, v in user.iteritems():
         if (not v) or (v.lower() == 'n/a'):
             continue
 
-        k = remove_quote(k.lower().strip())
-        v = v.lower().strip()
+        k = canonicalize(k)
         field_name = fields.get(k, k)
+        if k in CANONICAL_FIELDS:
+            v = canonicalize(v)
 
-        if field_name in ARRARY_FIELDS:
+        if field_name in ARRAY_FIELDS:
             v = [i.strip() for i in v.split(',')]
-            v = [i.strip() for i in v.split(' and ')]
-            v = [i.strip() for i in v.split('/')]
-            if field_name in CANONICAL_FIELDS:
-                v = [canonicalize(i) for i in v]
+            if field_name in SNAKE_CASE_FIELDS:
+                v = [to_snake_case(i) for i in v]
         else:
-            if field_name in CANONICAL_FIELDS:
-                v = canonicalize(v)
+            if field_name in SNAKE_CASE_FIELDS:
+                v = to_snake_case(v)
             if field_name in BOOLEAN_FIELDS:
                 v = v.lower() in ['yes', 'y', 'true']
 
@@ -97,7 +103,10 @@ def get_update(queried, new):
     update = {}
     for k, v in new.iteritems():
         if v and (k not in queried or queried[k] != v):
-            update[k] = v
+            if k in ARRAY_FIELDS:
+                update[k] = list(set((queried[k] if k in queried else []) + v))
+            else:
+                update[k] = v
     return update
 
 def set_default(user):
@@ -117,23 +126,20 @@ def add_one(user_data, dryrun):
     coll = get_coll()
     user = coll.find_one({"email": user_data['email']})
     if user:
-        print("Found user with email {}.".format(user_data['email']))
         update = get_update(user, user_data)
 
         if update:
-            if dryrun:
-                print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
-            else:
+            print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
+            if not dryrun:
                 coll.update_one({'_id': user['_id']}, {"$set": update}, upsert = False)
     else:
         user_data = set_default(user_data)
-        if dryrun:
-            print("Adding {}".format(user_data))
-        else:
+        print("Adding {}".format(user_data))
+        if not dryrun:
             coll.insert_one(user_data)
 
 def run(args):
-    users = parse_users(args.users, args.format)
+    users = parse_users(args.datadir)
     fields = parse_fields(args.fields)
     add_all(users, fields, args.dryrun)
 
