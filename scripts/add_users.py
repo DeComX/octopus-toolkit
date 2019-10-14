@@ -2,18 +2,19 @@
 
 from datetime import datetime
 
+import os
 import argparse
 import csv
-import os
 import pymongo
+import sys
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cleaner.py'))
+
+from cleaner import UserDataCleaner
 
 WHITELIST = ['name', 'email', 'title', 'organization', 'source',
              'interested_topics', 'expectation', 'interested_in_volunteer',
              'location', 'linkedin', 'github', 'resume', 'feedback', 'subscription_status']
 ARRAY_FIELDS = ['source', 'interested_topics', 'expectation']
-CANONICAL_FIELDS = ['title', 'location', 'source']
-BOOLEAN_FIELDS = ['interested_in_volunteer']
-SNAKE_CASE_FIELDS = ['source', 'interested_topics']
 
 def get_coll():
     client = pymongo.MongoClient("mongodb://root:root@127.0.0.1:27017/dev?authSource=admin")
@@ -31,7 +32,7 @@ def parse_args():
 def parse_users(directory):
     for filename in os.listdir(directory):
         if filename.endswith(".csv") or filename.endswith(".tsv"):
-            delim = ',' if filename.endswith(".csv") == 'csv' else '\t'
+            delim = ',' if filename.endswith(".csv") else '\t'
             fullname = os.path.join(directory, filename)
             print('Processing file {}'.format(fullname))
             with open(fullname, 'r') as f:
@@ -47,41 +48,13 @@ def parse_fields(filename):
             fields[row[0]] = row[1]
     return fields
 
-def canonicalize(value):
-    value = value.lower().strip()
-    if value.startswith('"') and value.endswith('"'):
-        value = value[1:-1]
-    if value.startswith("'") and value.endswith("'"):
-        value = value[1:-1]
-    value = value.replace('&', ' and ')
-    value = value.replace('/', ' and ')
-    return ' '.join(value.split())
-
-def to_snake_case(value):
-    return "_".join(value.lower().strip().split(' '))
-
-def transform_one(user, fields):
+def transform_one(user, cleaner):
     result = {}
     for k, v in user.iteritems():
         if (not v) or (v.lower() == 'n/a'):
             continue
-
-        k = canonicalize(k)
-        field_name = fields.get(k, k)
-        if k in CANONICAL_FIELDS:
-            v = canonicalize(v)
-
-        if field_name in ARRAY_FIELDS:
-            v = [i.strip() for i in v.split(',')]
-            if field_name in SNAKE_CASE_FIELDS:
-                v = [to_snake_case(i) for i in v]
-        else:
-            if field_name in SNAKE_CASE_FIELDS:
-                v = to_snake_case(v)
-            if field_name in BOOLEAN_FIELDS:
-                v = v.lower() in ['yes', 'y', 'true']
-
-        result[field_name] = v
+        (k, v) = cleaner.clean(k, v)
+        result[k] = v
     return result
 
 def post_process(user):
@@ -94,8 +67,9 @@ def post_process(user):
     return result
 
 def add_all(users, fields, dryrun):
+    cleaner = UserDataCleaner(fields)
     for user in users:
-        transformed = transform_one(user, fields)
+        transformed = transform_one(user, cleaner)
         processed = post_process(transformed)
         add_one(processed, dryrun)
 
@@ -129,18 +103,19 @@ def add_one(user_data, dryrun):
         update = get_update(user, user_data)
 
         if update:
-            print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
+    #        print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
             if not dryrun:
                 coll.update_one({'_id': user['_id']}, {"$set": update}, upsert = False)
     else:
         user_data = set_default(user_data)
-        print("Adding {}".format(user_data))
+    #    print("Adding {}".format(user_data))
         if not dryrun:
             coll.insert_one(user_data)
 
 def run(args):
     users = parse_users(args.datadir)
-    fields = parse_fields(args.fields)
+    default_field_map = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'field_map.csv')
+    fields = parse_fields(args.fields or default_field_map)
     add_all(users, fields, args.dryrun)
 
 def main():

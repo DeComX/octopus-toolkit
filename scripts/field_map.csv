@@ -1,6 +1,8 @@
 first name,first_name
 last name,last_name
 your full name,name
+full name,name
+full_name,name
 company,organization
 rsvp source,source
 email address,email
