@@ -1,4 +1,18 @@
+#!/bin/python2
+
 import re
+
+def canonicalize_title(title):
+    tocheck = title.lower().strip()
+    if tocheck == 'cto':
+        return 'CTO'
+    elif tocheck == 'ceo':
+        return 'CEO'
+    elif tocheck == 'cmo':
+        return 'CMO'
+    elif tocheck in ['cofounder', 'co-founder', 'co founder']:
+        return 'Co-Founder'
+    return title
 
 class Cleaner:
     def __init__(self, field_map):
@@ -46,7 +60,7 @@ class UserDataCleaner(Cleaner):
 
     def clean_title(self, title):
         titles = re.split(r'[&/,|]| and ', title)
-        titles = [t.strip() for t in titles]
+        titles = [canonicalize_title(t) for t in titles]
         return ','.join(titles)
 
     def clean_interested_topics(self, value):
