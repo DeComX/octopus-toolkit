@@ -103,12 +103,12 @@ def add_one(user_data, dryrun):
         update = get_update(user, user_data)
 
         if update:
-    #        print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
+            print("\t\tQuereid: {}\n\t\tNew: {}\n\t\tUpdate: {}".format(user, user_data, update))
             if not dryrun:
                 coll.update_one({'_id': user['_id']}, {"$set": update}, upsert = False)
     else:
         user_data = set_default(user_data)
-    #    print("Adding {}".format(user_data))
+        print("Adding {}".format(user_data))
         if not dryrun:
             coll.insert_one(user_data)
 
