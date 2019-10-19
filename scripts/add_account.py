@@ -5,7 +5,7 @@ import argparse
 def get_coll():
     client = pymongo.MongoClient("mongodb://root:root@127.0.0.1:27017/dev?authSource=admin")
     db = client.get_database()
-    return db['users']
+    return db['user']
 
 def parse_args():
     parser = argparse.ArgumentParser(description='register new user')
